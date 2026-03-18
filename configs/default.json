@@ -1,0 +1,15 @@
+{
+  "version_name": "default",
+  "random_seed": 20260318,
+  "round_trip": true,
+  "f_start": 2402000000.0,
+  "f_step": 1000000.0,
+  "n_freqs": 32,
+  "distance_grid": {
+    "start": 0.5,
+    "stop": 20.0,
+    "step": 0.05
+  },
+  "monte_carlo_trials": 200,
+  "save_dir": "results"
+}

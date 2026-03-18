@@ -1,0 +1,23 @@
+{
+  "version_name": "v5",
+  "random_seed": 20260318,
+  "round_trip": true,
+  "f_start": 2402000000.0,
+  "f_step": 1000000.0,
+  "n_freqs": 48,
+  "distance_grid": {
+    "start": 0.5,
+    "stop": 20.0,
+    "step": 0.05
+  },
+  "base_target_distance": 6.0,
+  "num_devices": 4,
+  "target_device_index": 0,
+  "snr_db": 20.0,
+  "n_paths_list": [1, 2, 3, 4, 5],
+  "path_gain_db_list": [-3, -6, -10, -15, -20],
+  "delay_spread_s": 2e-08,
+  "monte_carlo_trials": 200,
+  "success_threshold_m": 0.5,
+  "save_dir": "results"
+}

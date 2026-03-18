@@ -1,0 +1,18 @@
+{
+  "version_name": "v2",
+  "random_seed": 20260318,
+  "round_trip": true,
+  "f_start": 2402000000.0,
+  "f_step": 1000000.0,
+  "n_freqs": 40,
+  "distance_grid": {
+    "start": 1.0,
+    "stop": 20.0,
+    "step": 0.1
+  },
+  "true_distance": 6.0,
+  "snr_db_list": [-5, 0, 5, 10, 15, 20, 25, 30],
+  "monte_carlo_trials": 200,
+  "success_threshold_m": 0.5,
+  "save_dir": "results"
+}

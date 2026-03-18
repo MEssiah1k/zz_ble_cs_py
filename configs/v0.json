@@ -1,0 +1,17 @@
+{
+  "version_name": "v0",
+  "random_seed": 20260318,
+  "round_trip": false,
+  "f_start": 2402000000.0,
+  "f_step": 1000000.0,
+  "n_freqs": 32,
+  "distance_grid": {
+    "start": 0.5,
+    "stop": 10.0,
+    "step": 0.1
+  },
+  "distance_scan_values": [0.5, 1.0, 2.0, 4.0, 6.0, 8.0, 10.0],
+  "n_freqs_list": [10, 20, 40, 80],
+  "f_step_list": [500000.0, 1000000.0, 2000000.0, 5000000.0],
+  "save_dir": "results"
+}

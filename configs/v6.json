@@ -1,0 +1,21 @@
+{
+  "version_name": "v6",
+  "random_seed": 20260318,
+  "round_trip": true,
+  "f_start": 2402000000.0,
+  "f_step": 1000000.0,
+  "n_freqs": 48,
+  "distance_grid": {
+    "start": 0.5,
+    "stop": 20.0,
+    "step": 0.05
+  },
+  "base_target_distance": 6.0,
+  "num_devices": 4,
+  "target_device_index": 0,
+  "snr_db": 20.0,
+  "rician_k_list": [0, 1, 2, 4, 6, 8, 10],
+  "channel_realizations": 200,
+  "success_threshold_m": 0.5,
+  "save_dir": "results"
+}

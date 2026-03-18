@@ -1,0 +1,19 @@
+{
+  "version_name": "v3",
+  "random_seed": 20260318,
+  "round_trip": true,
+  "f_start": 2402000000.0,
+  "f_step": 1000000.0,
+  "n_freqs": 40,
+  "true_distance": 6.0,
+  "distance_grid": {
+    "start": 1.0,
+    "stop": 20.0,
+    "step": 0.1
+  },
+  "n_repeats_list": [1, 2, 5, 10, 20, 50, 100],
+  "random_phase_enable": true,
+  "monte_carlo_trials": 200,
+  "success_threshold_m": 0.5,
+  "save_dir": "results"
+}
