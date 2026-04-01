@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 
 from .constants import SPEED_OF_LIGHT
-from .target_matching import estimate_target_distance_by_scan
+from .target_matching import estimate_target_distance_by_scan, estimate_target_distance_from_peer_pair
 from .utils import unwrap_phase_safe
 
 
@@ -63,3 +63,21 @@ def estimate_distance_batch(responses: np.ndarray, freqs: np.ndarray, method: st
         raise ValueError(f"Unsupported method: {method}")
     estimator = estimators[method]
     return [estimator(response, freqs, **kwargs) for response in responses]
+
+
+def estimate_distance_by_peer_multifreq(
+    local_iq: np.ndarray,
+    peer_iq: np.ndarray,
+    freqs: np.ndarray,
+    distance_grid: np.ndarray,
+    round_trip: bool = True,
+    score_mode: str = "composite",
+) -> dict[str, Any]:
+    return estimate_target_distance_from_peer_pair(
+        local_iq,
+        peer_iq,
+        freqs,
+        distance_grid,
+        round_trip=round_trip,
+        score_mode=score_mode,
+    )

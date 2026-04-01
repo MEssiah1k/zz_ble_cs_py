@@ -10,10 +10,18 @@
     "stop": 20.0,
     "step": 0.05
   },
-  "base_target_distance": 6.0,
-  "target_prior_sigma_m": 0.75,
   "num_devices": 4,
   "target_device_index": 0,
+  "random_target_index": true,
+  "target_distance_range_m": [2.0, 18.0],
+  "device_distance_range_m": [1.0, 19.0],
+  "min_device_spacing_m": 0.75,
+  "prior_modes": {
+    "no_prior": {},
+    "weak_prior": {"bias_m": 0.0, "sigma_m": 2.5},
+    "accurate_prior": {"bias_m": 0.0, "sigma_m": 0.75},
+    "biased_prior": {"bias_m": 1.0, "sigma_m": 0.75}
+  },
   "snr_db": 20.0,
   "n_paths_list": [1, 2, 3, 4, 5],
   "path_gain_db_list": [-3, -6, -10, -15, -20],

@@ -1,4 +1,4 @@
-"""V4 concurrent multi-device ranging with target matching."""
+"""V4 concurrent ranging with peer-IQ matched multifrequency suppression."""
 
 from __future__ import annotations
 
@@ -6,95 +6,127 @@ import numpy as np
 import pandas as pd
 
 from ..channel_models import add_awgn
-from ..estimators import estimate_distance_by_phase_slope, estimate_distance_by_target_scan
+from ..estimators import estimate_distance_by_peer_multifreq, estimate_distance_by_phase_slope, estimate_distance_by_target_scan
 from ..io_utils import save_dataframe
 from ..metrics import summarize_errors
-from ..monte_carlo import collect_trial_results, run_monte_carlo
-from ..plotting import plot_distance_gap_vs_success, plot_num_devices_vs_error, plot_power_gap_vs_error, plot_score_curve
-from ..signal_models import multi_link_frequency_response
+from ..plotting import plot_num_devices_vs_error, plot_power_gap_vs_error, plot_score_curve
+from ..scenarios import build_random_ranging_scenario
+from ..signal_models import build_paired_iq_multi_link
 from ..utils import db_to_linear, set_random_seed
 from .common import config_distance_grid, finish_experiment, setup_experiment
 
 
-def _build_device_distances(base_target_distance: float, n_devices: int, gap: float, target_index: int) -> np.ndarray:
-    distances = np.array([base_target_distance + idx * gap for idx in range(n_devices)], dtype=float)
-    distances[target_index] = base_target_distance
-    return distances
-
-
 def _build_amplitudes(n_devices: int, target_index: int, power_gap_db: float) -> np.ndarray:
-    amps = np.ones(n_devices, dtype=float)
+    amplitudes = np.ones(n_devices, dtype=float)
     interferer_amp = np.sqrt(db_to_linear(-power_gap_db))
     for idx in range(n_devices):
         if idx != target_index:
-            amps[idx] = interferer_amp
-    return amps
+            amplitudes[idx] = interferer_amp
+    return amplitudes
 
 
-def _summarize_with_baselines(df: pd.DataFrame, success_threshold: float) -> dict:
-    scan_summary = summarize_errors(df["true_distance"], df["est_distance"], thresholds=[success_threshold])
-    legacy_summary = summarize_errors(df["true_distance"], df["legacy_est_distance"], thresholds=[success_threshold])
+def _encode_distances(distances: np.ndarray) -> str:
+    return ";".join(f"{distance:.3f}" for distance in np.asarray(distances, dtype=float))
+
+
+def _summarize_group(df: pd.DataFrame, success_threshold: float) -> dict:
+    peer_summary = summarize_errors(df["true_distance"], df["est_distance"], thresholds=[success_threshold])
+    raw_scan_summary = summarize_errors(df["true_distance"], df["legacy_est_distance"], thresholds=[success_threshold])
     naive_summary = summarize_errors(df["true_distance"], df["naive_est_distance"], thresholds=[success_threshold])
+    peer_slope_summary = summarize_errors(df["true_distance"], df["peer_slope_est_distance"], thresholds=[success_threshold])
     return {
-        **scan_summary,
-        "legacy_scan_rmse": legacy_summary["rmse"],
-        "legacy_scan_success_rate": legacy_summary[f"success_rate_le_{success_threshold}m"],
+        **peer_summary,
+        "raw_scan_rmse": raw_scan_summary["rmse"],
+        "raw_scan_success_rate": raw_scan_summary[f"success_rate_le_{success_threshold}m"],
         "naive_rmse": naive_summary["rmse"],
         "naive_success_rate": naive_summary[f"success_rate_le_{success_threshold}m"],
+        "peer_slope_rmse": peer_slope_summary["rmse"],
+        "peer_slope_success_rate": peer_slope_summary[f"success_rate_le_{success_threshold}m"],
         "mean_peak_ratio": float(df["peak_ratio"].mean()),
         "mean_peak_margin": float(df["peak_margin"].mean()),
         "mean_confidence": float(df["confidence"].mean()),
+        "mean_target_distance": float(df["target_distance"].mean()),
+        "mean_neighbor_gap": float(df["mean_neighbor_gap"].mean()),
+        "mean_target_neighbor_gap": float(df["target_neighbor_gap"].mean()),
+        "n_trials": int(len(df)),
     }
 
 
-def _trial(
+def _group_summary(df: pd.DataFrame, group_cols: list[str], success_threshold: float) -> pd.DataFrame:
+    rows = []
+    for keys, group in df.groupby(group_cols, dropna=False):
+        if not isinstance(keys, tuple):
+            keys = (keys,)
+        row = {col: value for col, value in zip(group_cols, keys)}
+        row.update(_summarize_group(group, success_threshold))
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def _neighbor_gap_summary(df: pd.DataFrame, bins: list[float], success_threshold: float) -> pd.DataFrame:
+    work_df = df.copy()
+    labels = [f"[{bins[idx]}, {bins[idx + 1]})" for idx in range(len(bins) - 1)]
+    work_df["neighbor_gap_bin"] = pd.cut(work_df["target_neighbor_gap"], bins=bins, labels=labels, include_lowest=True, right=False)
+    work_df = work_df.dropna(subset=["neighbor_gap_bin"])
+    return _group_summary(work_df, ["neighbor_gap_bin"], success_threshold)
+
+
+def _scenario_row(
     seed: int,
     freqs: np.ndarray,
     distance_grid: np.ndarray,
-    true_distance: float,
-    distances: np.ndarray,
-    amplitudes: np.ndarray,
-    target_index: int,
-    snr_db: float,
-    round_trip: bool,
-    target_prior_sigma_m: float | None,
+    config: dict,
+    n_devices: int,
+    power_gap_db: float,
+    scan_type: str,
+    scenario_value: float,
 ) -> dict:
     rng = set_random_seed(seed)
-    response = multi_link_frequency_response(
-        freqs,
-        distances,
-        amplitudes,
-        phase_offsets=rng.uniform(0.0, 2.0 * np.pi, size=len(distances)),
-        round_trip=round_trip,
+    scenario = build_random_ranging_scenario(
+        num_devices=n_devices,
+        target_distance_range_m=tuple(config["target_distance_range_m"]),
+        device_distance_range_m=tuple(config["device_distance_range_m"]),
+        min_device_spacing_m=float(config["min_device_spacing_m"]),
+        rng=rng,
+        target_index=None if config.get("random_target_index", True) else config.get("target_device_index", 0),
     )
-    noisy = add_awgn(response, snr_db=snr_db, rng=rng)
-    target_scan = estimate_distance_by_target_scan(
-        noisy,
-        freqs,
-        distance_grid,
-        round_trip=round_trip,
-        score_mode="composite",
-        prior_distance=true_distance,
-        prior_sigma_m=target_prior_sigma_m,
-    )
-    legacy_scan = estimate_distance_by_target_scan(noisy, freqs, distance_grid, round_trip=round_trip, score_mode="legacy")
-    naive = estimate_distance_by_phase_slope(noisy, freqs, round_trip=round_trip)
+    phase_offsets = rng.uniform(0.0, 2.0 * np.pi, size=(n_devices, len(freqs)))
+    amplitudes = _build_amplitudes(n_devices, scenario["target_index"], power_gap_db)
+    local_iq, peer_iqs = build_paired_iq_multi_link(freqs, scenario["distances"], amplitudes, phase_offsets=phase_offsets, round_trip=config["round_trip"])
+    noisy_local = add_awgn(local_iq, snr_db=config["snr_db"], rng=rng)
+    target_peer = peer_iqs[scenario["target_index"]]
+
+    estimate = estimate_distance_by_peer_multifreq(noisy_local, target_peer, freqs, distance_grid, round_trip=config["round_trip"])
+    raw_scan = estimate_distance_by_target_scan(noisy_local, freqs, distance_grid, round_trip=config["round_trip"], score_mode="legacy")
+    naive = estimate_distance_by_phase_slope(noisy_local, freqs, round_trip=config["round_trip"])
+    peer_slope = estimate_distance_by_phase_slope(estimate["matched_response"], freqs, round_trip=config["round_trip"])
+
     return {
         "trial_id": seed,
-        "true_distance": true_distance,
-        "est_distance": target_scan["distance_est"],
-        "legacy_est_distance": legacy_scan["distance_est"],
+        "scan_type": scan_type,
+        "scenario_value": scenario_value,
+        "true_distance": scenario["target_distance"],
+        "target_distance": scenario["target_distance"],
+        "target_index": scenario["target_index"],
+        "num_devices": n_devices,
+        "power_gap_db": power_gap_db,
+        "device_distances": _encode_distances(scenario["distances"]),
+        "mean_neighbor_gap": scenario["mean_neighbor_gap"],
+        "min_neighbor_gap": scenario["min_neighbor_gap"],
+        "target_neighbor_gap": scenario["target_neighbor_gap"],
+        "est_distance": estimate["distance_est"],
+        "legacy_est_distance": raw_scan["distance_est"],
         "naive_est_distance": naive["distance_est"],
-        "abs_error": abs(target_scan["distance_est"] - true_distance),
-        "legacy_abs_error": abs(legacy_scan["distance_est"] - true_distance),
-        "naive_abs_error": abs(naive["distance_est"] - true_distance),
-        "best_score": target_scan["best_score"],
-        "second_best_score": target_scan["second_best_score"],
-        "peak_margin": target_scan["peak_margin"],
-        "peak_ratio": target_scan["peak_ratio"],
-        "confidence": target_scan["confidence"],
-        "n_devices": len(distances),
-        "target_index": target_index,
+        "peer_slope_est_distance": peer_slope["distance_est"],
+        "abs_error": abs(estimate["distance_est"] - scenario["target_distance"]),
+        "legacy_abs_error": abs(raw_scan["distance_est"] - scenario["target_distance"]),
+        "naive_abs_error": abs(naive["distance_est"] - scenario["target_distance"]),
+        "peer_slope_abs_error": abs(peer_slope["distance_est"] - scenario["target_distance"]),
+        "best_score": estimate["best_score"],
+        "second_best_score": estimate["second_best_score"],
+        "peak_margin": estimate["peak_margin"],
+        "peak_ratio": estimate["peak_ratio"],
+        "confidence": estimate["confidence"],
         "seed": seed,
     }
 
@@ -104,123 +136,75 @@ def run(config: dict, overwrite: bool = False) -> dict:
     distance_grid = config_distance_grid(config)
     success_threshold = config["success_threshold_m"]
 
-    trial_tables = []
-    num_device_rows = []
+    trial_rows: list[dict] = []
     for n_devices in config["num_devices_list"]:
-        distances = _build_device_distances(config["base_target_distance"], n_devices, gap=2.0, target_index=config["target_device_index"])
-        amplitudes = np.ones(n_devices)
-        results = run_monte_carlo(
-            lambda seed: _trial(
-                seed,
-                freqs,
-                distance_grid,
-                config["base_target_distance"],
-                distances,
-                amplitudes,
-                config["target_device_index"],
-                config["snr_db"],
-                config["round_trip"],
-                config.get("target_prior_sigma_m"),
-            ),
-            config["monte_carlo_trials"],
-            config["random_seed"] + n_devices * 97,
-        )
-        df = collect_trial_results(results)
-        trial_tables.append(df.assign(scan_type="num_devices", scenario_value=n_devices))
-        num_device_rows.append({"n_devices": n_devices, **_summarize_with_baselines(df, success_threshold)})
-
-    distance_gap_rows = []
-    for gap in config["distance_gap_list"]:
-        distances = _build_device_distances(config["base_target_distance"], max(config["num_devices_list"]), gap=gap, target_index=config["target_device_index"])
-        amplitudes = np.ones(len(distances))
-        results = run_monte_carlo(
-            lambda seed: _trial(
-                seed,
-                freqs,
-                distance_grid,
-                config["base_target_distance"],
-                distances,
-                amplitudes,
-                config["target_device_index"],
-                config["snr_db"],
-                config["round_trip"],
-                config.get("target_prior_sigma_m"),
-            ),
-            config["monte_carlo_trials"],
-            config["random_seed"] + int(gap * 131),
-        )
-        df = collect_trial_results(results)
-        trial_tables.append(df.assign(scan_type="distance_gap", scenario_value=gap))
-        distance_gap_rows.append({"distance_gap_m": gap, **_summarize_with_baselines(df, success_threshold)})
-
-    power_gap_rows = []
+        seed_base = config["random_seed"] + n_devices * 97
+        for trial_idx in range(config["monte_carlo_trials"]):
+            trial_rows.append(
+                _scenario_row(
+                    seed_base + trial_idx,
+                    freqs,
+                    distance_grid,
+                    config,
+                    n_devices=n_devices,
+                    power_gap_db=0.0,
+                    scan_type="num_devices",
+                    scenario_value=float(n_devices),
+                )
+            )
     for power_gap_db in config["power_gap_db_list"]:
-        distances = _build_device_distances(config["base_target_distance"], max(config["num_devices_list"]), gap=2.0, target_index=config["target_device_index"])
-        amplitudes = _build_amplitudes(len(distances), config["target_device_index"], power_gap_db)
-        results = run_monte_carlo(
-            lambda seed: _trial(
-                seed,
-                freqs,
-                distance_grid,
-                config["base_target_distance"],
-                distances,
-                amplitudes,
-                config["target_device_index"],
-                config["snr_db"],
-                config["round_trip"],
-                config.get("target_prior_sigma_m"),
-            ),
-            config["monte_carlo_trials"],
-            config["random_seed"] + int((power_gap_db + 20) * 173),
-        )
-        df = collect_trial_results(results)
-        trial_tables.append(df.assign(scan_type="power_gap", scenario_value=power_gap_db))
-        power_gap_rows.append({"power_gap_db": power_gap_db, **_summarize_with_baselines(df, success_threshold)})
+        seed_base = config["random_seed"] + int((power_gap_db + 20.0) * 173)
+        for trial_idx in range(config["monte_carlo_trials"]):
+            trial_rows.append(
+                _scenario_row(
+                    seed_base + trial_idx,
+                    freqs,
+                    distance_grid,
+                    config,
+                    n_devices=int(config.get("power_gap_num_devices", max(config["num_devices_list"]))),
+                    power_gap_db=float(power_gap_db),
+                    scan_type="power_gap",
+                    scenario_value=float(power_gap_db),
+                )
+            )
 
-    example_distances = _build_device_distances(config["base_target_distance"], max(config["num_devices_list"]), gap=2.0, target_index=config["target_device_index"])
-    example_amplitudes = _build_amplitudes(len(example_distances), config["target_device_index"], 3.0)
-    example_response = multi_link_frequency_response(
-        freqs,
-        example_distances,
-        example_amplitudes,
-        phase_offsets=np.zeros(len(example_distances)),
-        round_trip=config["round_trip"],
-    )
-    example_scan = estimate_distance_by_target_scan(
-        example_response,
-        freqs,
-        distance_grid,
-        round_trip=config["round_trip"],
-        score_mode="composite",
-        prior_distance=config["base_target_distance"],
-        prior_sigma_m=config.get("target_prior_sigma_m"),
-    )
+    trial_df = pd.DataFrame(trial_rows)
+    num_device_df = _group_summary(trial_df[trial_df["scan_type"] == "num_devices"], ["num_devices"], success_threshold)
+    power_gap_df = _group_summary(trial_df[trial_df["scan_type"] == "power_gap"], ["power_gap_db"], success_threshold)
+    overall_df = pd.DataFrame([_summarize_group(trial_df, success_threshold)])
+    neighbor_gap_df = _neighbor_gap_summary(trial_df[trial_df["scan_type"] == "num_devices"], config["neighbor_gap_bins_m"], success_threshold)
 
-    num_device_df = pd.DataFrame(num_device_rows)
-    distance_gap_df = pd.DataFrame(distance_gap_rows)
-    power_gap_df = pd.DataFrame(power_gap_rows)
-    trial_df = pd.concat(trial_tables, ignore_index=True)
+    example_row = trial_df.iloc[0]
+    example_rng = set_random_seed(int(example_row["seed"]))
+    example_scenario = build_random_ranging_scenario(
+        num_devices=int(example_row["num_devices"]),
+        target_distance_range_m=tuple(config["target_distance_range_m"]),
+        device_distance_range_m=tuple(config["device_distance_range_m"]),
+        min_device_spacing_m=float(config["min_device_spacing_m"]),
+        rng=example_rng,
+        target_index=None if config.get("random_target_index", True) else config.get("target_device_index", 0),
+    )
+    example_phase_offsets = example_rng.uniform(0.0, 2.0 * np.pi, size=(int(example_row["num_devices"]), len(freqs)))
+    example_amps = _build_amplitudes(int(example_row["num_devices"]), example_scenario["target_index"], float(example_row["power_gap_db"]))
+    example_local, example_peers = build_paired_iq_multi_link(freqs, example_scenario["distances"], example_amps, phase_offsets=example_phase_offsets, round_trip=config["round_trip"])
+    example_noisy = add_awgn(example_local, snr_db=config["snr_db"], rng=example_rng)
+    example_estimate = estimate_distance_by_peer_multifreq(example_noisy, example_peers[example_scenario["target_index"]], freqs, distance_grid, round_trip=config["round_trip"])
 
     save_dataframe(trial_df, output_dir / "tables", "trial_results.csv")
     save_dataframe(num_device_df, output_dir / "tables", "summary_num_devices.csv")
-    save_dataframe(distance_gap_df, output_dir / "tables", "summary_distance_gap.csv")
     save_dataframe(power_gap_df, output_dir / "tables", "summary_power_gap.csv")
+    save_dataframe(overall_df, output_dir / "tables", "summary_overall.csv")
+    save_dataframe(neighbor_gap_df, output_dir / "tables", "summary_neighbor_gap.csv")
 
-    plot_num_devices_vs_error(num_device_df["n_devices"].to_numpy(), num_device_df["rmse"].to_numpy(), output_dir / "figures" / "num_devices_vs_rmse.png")
-    plot_distance_gap_vs_success(
-        distance_gap_df["distance_gap_m"].to_numpy(),
-        distance_gap_df[f"success_rate_le_{success_threshold}m"].to_numpy(),
-        output_dir / "figures" / "distance_gap_vs_success.png",
-    )
+    plot_num_devices_vs_error(num_device_df["num_devices"].to_numpy(), num_device_df["rmse"].to_numpy(), output_dir / "figures" / "num_devices_vs_rmse.png")
     plot_power_gap_vs_error(power_gap_df["power_gap_db"].to_numpy(), power_gap_df["rmse"].to_numpy(), output_dir / "figures" / "power_gap_vs_rmse.png")
-    plot_score_curve(example_scan["distance_grid"], example_scan["scores"], output_dir / "figures" / "target_score_curve.png")
+    plot_score_curve(example_estimate["distance_grid"], example_estimate["scores"], output_dir / "figures" / "target_score_curve.png")
 
-    return finish_experiment(
-        {
-            "n_trials": int(len(trial_df)),
-            "best_num_device_rmse": float(num_device_df["rmse"].min()),
-            "best_distance_gap_success": float(distance_gap_df[f"success_rate_le_{success_threshold}m"].max()),
-            "best_power_gap_success": float(power_gap_df[f"success_rate_le_{success_threshold}m"].max()),
-        },
-        output_dir,
-    )
+    summary = {
+        "n_trials": int(len(trial_df)),
+        "peer_multifreq_rmse": float(overall_df.loc[0, "rmse"]),
+        f"peer_multifreq_success_rate_le_{success_threshold}m": float(overall_df.loc[0, f"success_rate_le_{success_threshold}m"]),
+        "raw_scan_rmse": float(overall_df.loc[0, "raw_scan_rmse"]),
+        "naive_rmse": float(overall_df.loc[0, "naive_rmse"]),
+    }
+    return finish_experiment(summary, output_dir)

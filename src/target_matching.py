@@ -7,6 +7,14 @@ import numpy as np
 from .signal_models import _propagation_delay
 
 
+def build_peer_compensated_response(local_iq: np.ndarray, peer_iq: np.ndarray) -> np.ndarray:
+    local = np.asarray(local_iq, dtype=np.complex128)
+    peer = np.asarray(peer_iq, dtype=np.complex128)
+    if local.shape != peer.shape:
+        raise ValueError("local_iq and peer_iq must have the same shape")
+    return local * np.conj(peer)
+
+
 def build_target_compensation(freqs: np.ndarray, hypothesized_distance: float, round_trip: bool = True) -> np.ndarray:
     freqs = np.asarray(freqs, dtype=float)
     tau = _propagation_delay(hypothesized_distance, round_trip=round_trip)
@@ -166,3 +174,23 @@ def estimate_target_distance_by_scan(
     }
     result.update(diagnostics)
     return result
+
+
+def estimate_target_distance_from_peer_pair(
+    local_iq: np.ndarray,
+    peer_iq: np.ndarray,
+    freqs: np.ndarray,
+    distance_grid: np.ndarray,
+    round_trip: bool = True,
+    score_mode: str = "composite",
+) -> dict[str, np.ndarray | float]:
+    matched_response = build_peer_compensated_response(local_iq, peer_iq)
+    estimate = estimate_target_distance_by_scan(
+        matched_response,
+        freqs,
+        distance_grid,
+        round_trip=round_trip,
+        score_mode=score_mode,
+    )
+    estimate["matched_response"] = matched_response
+    return estimate

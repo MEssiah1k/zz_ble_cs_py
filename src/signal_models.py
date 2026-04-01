@@ -95,3 +95,28 @@ def repeated_measurements_multi_link(
             )
         responses.append(response)
     return np.asarray(responses)
+
+
+def build_paired_iq_multi_link(
+    freqs: np.ndarray,
+    distances: np.ndarray,
+    amplitudes: np.ndarray,
+    phase_offsets: np.ndarray | None = None,
+    round_trip: bool = True,
+) -> tuple[np.ndarray, np.ndarray]:
+    freqs = np.asarray(freqs, dtype=float)
+    distances = np.asarray(distances, dtype=float)
+    amplitudes = np.asarray(amplitudes, dtype=float)
+    if phase_offsets is None:
+        phase_offsets_arr = np.zeros((len(distances), len(freqs)), dtype=float)
+    else:
+        phase_offsets_arr = np.asarray(phase_offsets, dtype=float)
+        if phase_offsets_arr.ndim == 1:
+            phase_offsets_arr = np.repeat(phase_offsets_arr[:, None], len(freqs), axis=1)
+    local_iq = np.zeros(len(freqs), dtype=np.complex128)
+    peer_iqs = np.zeros((len(distances), len(freqs)), dtype=np.complex128)
+    for dev_idx, (distance, amplitude) in enumerate(zip(distances, amplitudes)):
+        offset = phase_offsets_arr[dev_idx]
+        local_iq += single_link_frequency_response(freqs, distance, amplitude=amplitude, phase_offset=offset, round_trip=round_trip)
+        peer_iqs[dev_idx] = np.exp(1j * offset)
+    return local_iq, peer_iqs
