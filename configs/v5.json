@@ -11,6 +11,7 @@
     "step": 0.05
   },
   "base_target_distance": 6.0,
+  "target_prior_sigma_m": 0.75,
   "num_devices": 4,
   "target_device_index": 0,
   "snr_db": 20.0,

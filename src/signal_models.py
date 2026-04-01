@@ -54,7 +54,8 @@ def repeated_measurements_single_link(
 ) -> np.ndarray:
     rng = rng or np.random.default_rng()
     responses = []
-    phase_offsets = random_phase_offsets(n_repeats, 1, len(freqs), rng).reshape(n_repeats, len(freqs)) if random_phase else np.zeros((n_repeats, len(freqs)))
+    # V3 关注的是“每次测量一个随机相位偏置”，而不是每个频点独立乱跳。
+    phase_offsets = random_phase_offsets(n_repeats, 1, len(freqs), rng, per_frequency=False).reshape(n_repeats, len(freqs)) if random_phase else np.zeros((n_repeats, len(freqs)))
     for repeat_idx in range(n_repeats):
         responses.append(
             single_link_frequency_response(

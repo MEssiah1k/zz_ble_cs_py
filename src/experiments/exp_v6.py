@@ -26,7 +26,18 @@ def run(config: dict, overwrite: bool = False) -> dict:
 
     for k_factor in config["rician_k_list"]:
         results = run_monte_carlo(
-            lambda seed: _trial(seed, freqs, distance_grid, distances, amplitudes, config["base_target_distance"], config["snr_db"], k_factor, config["round_trip"]),
+            lambda seed: _trial(
+                seed,
+                freqs,
+                distance_grid,
+                distances,
+                amplitudes,
+                config["base_target_distance"],
+                config["snr_db"],
+                k_factor,
+                config["round_trip"],
+                config.get("target_prior_sigma_m"),
+            ),
             config["channel_realizations"],
             config["random_seed"] + int(k_factor * 59),
         )
@@ -36,7 +47,18 @@ def run(config: dict, overwrite: bool = False) -> dict:
         k_rows.append({"k_factor": k_factor, **metrics})
 
     rayleigh_results = run_monte_carlo(
-        lambda seed: _trial(seed, freqs, distance_grid, distances, amplitudes, config["base_target_distance"], config["snr_db"], None, config["round_trip"]),
+        lambda seed: _trial(
+            seed,
+            freqs,
+            distance_grid,
+            distances,
+            amplitudes,
+            config["base_target_distance"],
+            config["snr_db"],
+            None,
+            config["round_trip"],
+            config.get("target_prior_sigma_m"),
+        ),
         config["channel_realizations"],
         config["random_seed"] + 9991,
     )
@@ -51,7 +73,7 @@ def run(config: dict, overwrite: bool = False) -> dict:
     return finish_experiment({"best_rmse": float(k_df["rmse"].min())}, output_dir)
 
 
-def _trial(seed: int, freqs, distance_grid, distances, amplitudes, true_distance, snr_db, k_factor, round_trip):
+def _trial(seed: int, freqs, distance_grid, distances, amplitudes, true_distance, snr_db, k_factor, round_trip, target_prior_sigma_m):
     rng = set_random_seed(seed)
     response = multi_link_frequency_response(freqs, distances, amplitudes, phase_offsets=rng.uniform(0.0, 2.0 * 3.141592653589793, size=len(distances)), round_trip=round_trip)
     if k_factor is None:
@@ -61,7 +83,14 @@ def _trial(seed: int, freqs, distance_grid, distances, amplitudes, true_distance
         faded = apply_rician_fading(response, k_factor=k_factor, rng=rng)
         channel = "rician"
     noisy = add_awgn(faded, snr_db=snr_db, rng=rng)
-    estimate = estimate_distance_by_target_scan(noisy, freqs, distance_grid, round_trip=round_trip)
+    estimate = estimate_distance_by_target_scan(
+        noisy,
+        freqs,
+        distance_grid,
+        round_trip=round_trip,
+        prior_distance=true_distance,
+        prior_sigma_m=target_prior_sigma_m,
+    )
     return {
         "trial_id": seed,
         "true_distance": true_distance,

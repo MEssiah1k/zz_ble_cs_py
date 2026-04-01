@@ -33,8 +33,24 @@ def estimate_distance_by_phase_slope(response: np.ndarray, freqs: np.ndarray, ro
     }
 
 
-def estimate_distance_by_target_scan(response: np.ndarray, freqs: np.ndarray, distance_grid: np.ndarray, round_trip: bool = True) -> dict[str, Any]:
-    return estimate_target_distance_by_scan(response, freqs, distance_grid, round_trip=round_trip)
+def estimate_distance_by_target_scan(
+    response: np.ndarray,
+    freqs: np.ndarray,
+    distance_grid: np.ndarray,
+    round_trip: bool = True,
+    score_mode: str = "composite",
+    prior_distance: float | None = None,
+    prior_sigma_m: float | None = None,
+) -> dict[str, Any]:
+    return estimate_target_distance_by_scan(
+        response,
+        freqs,
+        distance_grid,
+        round_trip=round_trip,
+        score_mode=score_mode,
+        prior_distance=prior_distance,
+        prior_sigma_m=prior_sigma_m,
+    )
 
 
 def estimate_distance_batch(responses: np.ndarray, freqs: np.ndarray, method: str, **kwargs: Any) -> list[dict[str, Any]]:

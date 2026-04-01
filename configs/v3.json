@@ -13,6 +13,7 @@
   },
   "n_repeats_list": [1, 2, 5, 10, 20, 50, 100],
   "random_phase_enable": true,
+  "snr_db": 0.0,
   "monte_carlo_trials": 200,
   "success_threshold_m": 0.5,
   "save_dir": "results"

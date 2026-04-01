@@ -13,6 +13,7 @@
   "base_target_distance": 6.0,
   "num_devices_list": [1, 2, 4, 8, 12, 16],
   "target_device_index": 0,
+  "target_prior_sigma_m": 0.75,
   "distance_gap_list": [0.5, 1.0, 2.0, 4.0, 6.0, 10.0],
   "power_gap_db_list": [-10, -6, -3, 0, 3, 6, 10],
   "snr_db": 20.0,

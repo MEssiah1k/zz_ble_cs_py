@@ -16,8 +16,12 @@ def random_phase_offsets(
     rng: np.random.Generator,
     low: float = 0.0,
     high: float = 2.0 * np.pi,
+    per_frequency: bool = True,
 ) -> np.ndarray:
-    return rng.uniform(low, high, size=(n_repeats, n_devices, n_freqs))
+    if per_frequency:
+        return rng.uniform(low, high, size=(n_repeats, n_devices, n_freqs))
+    base = rng.uniform(low, high, size=(n_repeats, n_devices, 1))
+    return np.repeat(base, n_freqs, axis=2)
 
 
 def frequency_dependent_phase(freqs: np.ndarray, slope_rad_per_hz: float = 0.0, intercept: float = 0.0) -> np.ndarray:

@@ -65,7 +65,14 @@ def _trial(seed: int, freqs: np.ndarray, distance_grid: np.ndarray, config: dict
     rng = set_random_seed(seed)
     response = _build_response(freqs, config["base_target_distance"], config["num_devices"], n_paths, path_gain_db, config["delay_spread_s"], rng)
     noisy = add_awgn(response, config["snr_db"], rng=rng)
-    estimate = estimate_distance_by_target_scan(noisy, freqs, distance_grid, round_trip=config["round_trip"])
+    estimate = estimate_distance_by_target_scan(
+        noisy,
+        freqs,
+        distance_grid,
+        round_trip=config["round_trip"],
+        prior_distance=config["base_target_distance"],
+        prior_sigma_m=config.get("target_prior_sigma_m"),
+    )
     return {
         "trial_id": seed,
         "true_distance": config["base_target_distance"],
