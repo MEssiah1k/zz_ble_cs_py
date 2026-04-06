@@ -138,3 +138,56 @@ def plot_score_curve(distance_grid: np.ndarray, scores: np.ndarray, output_path:
     ax.set_ylabel("Coherent score")
     ax.grid(True, alpha=0.3)
     return _save(fig, output_path)
+
+
+def _moving_average(values: np.ndarray, window: int) -> np.ndarray:
+    if window <= 1:
+        return np.asarray(values, dtype=float)
+    kernel = np.ones(window, dtype=float) / float(window)
+    pad_left = window // 2
+    pad_right = window - 1 - pad_left
+    padded = np.pad(np.asarray(values, dtype=float), (pad_left, pad_right), mode="edge")
+    return np.convolve(padded, kernel, mode="valid")
+
+
+def plot_distance_gap_vs_error(
+    distance_gaps: np.ndarray,
+    errors: np.ndarray,
+    output_path: str | Path,
+    smooth_window: int = 5,
+) -> Path:
+    fig, ax = plt.subplots(figsize=(7, 4))
+    ax.plot(distance_gaps, errors, marker="o", alpha=0.7, label="RMSE")
+    if smooth_window > 1 and len(errors) >= smooth_window:
+        smooth_errors = _moving_average(errors, smooth_window)
+        ax.plot(distance_gaps, smooth_errors, linewidth=2.2, color="tab:red", label=f"Moving average ({smooth_window})")
+    ax.set_xlabel("Device spacing (m)")
+    ax.set_ylabel("RMSE (m)")
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+    return _save(fig, output_path)
+
+
+def plot_error_heatmap(
+    x_values: np.ndarray,
+    y_values: np.ndarray,
+    error_grid: np.ndarray,
+    output_path: str | Path,
+    xlabel: str,
+    ylabel: str,
+    colorbar_label: str = "RMSE (m)",
+) -> Path:
+    fig, ax = plt.subplots(figsize=(7, 5))
+    mesh = ax.imshow(
+        np.asarray(error_grid, dtype=float),
+        origin="lower",
+        aspect="auto",
+        extent=[float(np.min(x_values)), float(np.max(x_values)), float(np.min(y_values)), float(np.max(y_values))],
+        interpolation="nearest",
+    )
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.grid(False)
+    cbar = fig.colorbar(mesh, ax=ax)
+    cbar.set_label(colorbar_label)
+    return _save(fig, output_path)

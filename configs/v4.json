@@ -25,6 +25,13 @@
   },
   "power_gap_db_list": [-10, -6, -3, 0, 3, 6, 10],
   "power_gap_num_devices": 5,
+  "diagnostic_target_distance_m": 5.0,
+  "diagnostic_gap_scan_m": {
+    "start": 0.1,
+    "stop": 8.0,
+    "step": 0.1
+  },
+  "diagnostic_trials": 20,
   "snr_db": 20.0,
   "monte_carlo_trials": 200,
   "success_threshold_m": 0.5,

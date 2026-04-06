@@ -9,7 +9,7 @@ from ..channel_models import add_awgn
 from ..estimators import estimate_distance_by_peer_multifreq, estimate_distance_by_phase_slope, estimate_distance_by_target_scan
 from ..io_utils import save_dataframe
 from ..metrics import summarize_errors
-from ..plotting import plot_num_devices_vs_error, plot_power_gap_vs_error, plot_score_curve
+from ..plotting import plot_distance_gap_vs_error, plot_num_devices_vs_error, plot_power_gap_vs_error, plot_score_curve
 from ..scenarios import build_random_ranging_scenario
 from ..signal_models import build_paired_iq_multi_link
 from ..utils import db_to_linear, set_random_seed
@@ -131,6 +131,43 @@ def _scenario_row(
     }
 
 
+def _two_device_row(
+    seed: int,
+    freqs: np.ndarray,
+    distance_grid: np.ndarray,
+    config: dict,
+    target_distance: float,
+    interferer_distance: float,
+) -> dict:
+    rng = set_random_seed(seed)
+    distances = np.array([target_distance, interferer_distance], dtype=float)
+    target_index = 0
+    phase_offsets = rng.uniform(0.0, 2.0 * np.pi, size=(2, len(freqs)))
+    amplitudes = _build_amplitudes(2, target_index, 0.0)
+    local_iq, peer_iqs = build_paired_iq_multi_link(freqs, distances, amplitudes, phase_offsets=phase_offsets, round_trip=config["round_trip"])
+    noisy_local = add_awgn(local_iq, snr_db=config["snr_db"], rng=rng)
+    estimate = estimate_distance_by_peer_multifreq(noisy_local, peer_iqs[target_index], freqs, distance_grid, round_trip=config["round_trip"])
+    return {
+        "target_distance": float(target_distance),
+        "interferer_distance": float(interferer_distance),
+        "device_spacing_m": float(abs(interferer_distance - target_distance)),
+        "est_distance": estimate["distance_est"],
+        "abs_error": abs(estimate["distance_est"] - target_distance),
+    }
+
+
+def _build_gap_values(config: dict) -> np.ndarray:
+    gap_scan = config.get("diagnostic_gap_scan_m")
+    if gap_scan is not None:
+        start = float(gap_scan["start"])
+        stop = float(gap_scan["stop"])
+        step = float(gap_scan["step"])
+        # 用整数步数避免浮点累积误差，确保 0.1 m 精度扫描能覆盖终点。
+        count = int(round((stop - start) / step)) + 1
+        return start + np.arange(count, dtype=float) * step
+    return np.asarray(config["diagnostic_gap_values_m"], dtype=float)
+
+
 def run(config: dict, overwrite: bool = False) -> dict:
     freqs, output_dir = setup_experiment(config, overwrite=overwrite)
     distance_grid = config_distance_grid(config)
@@ -174,6 +211,47 @@ def run(config: dict, overwrite: bool = False) -> dict:
     overall_df = pd.DataFrame([_summarize_group(trial_df, success_threshold)])
     neighbor_gap_df = _neighbor_gap_summary(trial_df[trial_df["scan_type"] == "num_devices"], config["neighbor_gap_bins_m"], success_threshold)
 
+    # 固定 1 对 2 场景：距离域诊断
+    gap_rows: list[dict] = []
+    if "diagnostic_target_distance_m" in config:
+        target_grid = np.asarray([config["diagnostic_target_distance_m"]], dtype=float)
+    else:
+        target_grid = np.asarray(config["diagnostic_target_distance_grid_m"], dtype=float)
+    gap_values = _build_gap_values(config)
+    diag_trials = int(config.get("diagnostic_trials", 50))
+    distance_min = float(config["device_distance_range_m"][0])
+    distance_max = float(config["device_distance_range_m"][1])
+    for gap in gap_values:
+        per_gap_rows: list[dict] = []
+        for target_distance in target_grid:
+            interferer_distance = float(target_distance + gap)
+            if interferer_distance > distance_max:
+                interferer_distance = float(target_distance - gap)
+            if interferer_distance < distance_min:
+                continue
+            for trial_idx in range(diag_trials):
+                per_gap_rows.append(
+                    _two_device_row(
+                        config["random_seed"] + 500000 + int(gap * 1000) * 97 + int(target_distance * 100) * 13 + trial_idx,
+                        freqs,
+                        distance_grid,
+                        config,
+                        float(target_distance),
+                        interferer_distance,
+                    )
+                )
+        per_gap_df = pd.DataFrame(per_gap_rows)
+        gap_rows.append(
+            {
+                "device_spacing_m": float(gap),
+                "mae": float(per_gap_df["abs_error"].mean()),
+                "rmse": float(np.sqrt(np.mean(per_gap_df["abs_error"] ** 2))),
+                f"success_rate_le_{success_threshold}m": float(np.mean(per_gap_df["abs_error"] <= success_threshold)),
+                "n_trials": int(len(per_gap_df)),
+            }
+        )
+    gap_df = pd.DataFrame(gap_rows)
+
     example_row = trial_df.iloc[0]
     example_rng = set_random_seed(int(example_row["seed"]))
     example_scenario = build_random_ranging_scenario(
@@ -195,10 +273,12 @@ def run(config: dict, overwrite: bool = False) -> dict:
     save_dataframe(power_gap_df, output_dir / "tables", "summary_power_gap.csv")
     save_dataframe(overall_df, output_dir / "tables", "summary_overall.csv")
     save_dataframe(neighbor_gap_df, output_dir / "tables", "summary_neighbor_gap.csv")
+    save_dataframe(gap_df, output_dir / "tables", "summary_two_device_gap.csv")
 
     plot_num_devices_vs_error(num_device_df["num_devices"].to_numpy(), num_device_df["rmse"].to_numpy(), output_dir / "figures" / "num_devices_vs_rmse.png")
     plot_power_gap_vs_error(power_gap_df["power_gap_db"].to_numpy(), power_gap_df["rmse"].to_numpy(), output_dir / "figures" / "power_gap_vs_rmse.png")
     plot_score_curve(example_estimate["distance_grid"], example_estimate["scores"], output_dir / "figures" / "target_score_curve.png")
+    plot_distance_gap_vs_error(gap_df["device_spacing_m"].to_numpy(), gap_df["rmse"].to_numpy(), output_dir / "figures" / "two_device_gap_vs_rmse.png")
 
     summary = {
         "n_trials": int(len(trial_df)),
